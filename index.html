@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microfone Bluetooth Web</title>
+    <!-- Carrega o Tailwind CSS para estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilos customizados para o corpo e o layout */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a2e; /* Fundo escuro */
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* Estilo para o contêiner principal */
+        .app-container {
+            background-color: #0f0f23; /* Cartão mais escuro */
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+
+        /* Estilo para o botão principal (Start/Stop) */
+        #toggleButton {
+            transition: all 0.3s ease;
+            font-size: 1.25rem;
+            font-weight: bold;
+            padding: 1rem 2rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Estilo para o botão no estado "Parar" (Ligado) */
+        .btn-stop {
+            background-color: #e53e3e; /* Vermelho mais forte */
+            color: #ffffff;
+            border: 2px solid #c53030;
+        }
+        .btn-stop:hover {
+            background-color: #c53030;
+        }
+
+        /* Estilo para o botão no estado "Iniciar" (Desligado) */
+        .btn-start {
+            background-color: #38a169; /* Verde mais forte */
+            color: #ffffff;
+            border: 2px solid #2f855a;
+        }
+        .btn-start:hover {
+            background-color: #2f855a;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <h1 class="text-3xl font-extrabold mb-4 text-pink-400">Microfone Bluetooth Web</h1>
+        <p class="mb-6 text-gray-400">Transforme seu celular/dispositivo em um microfone de transmissão em tempo real.</p>
+        
+        <!-- Botão principal -->
+        <button id="toggleButton" class="btn-start">
+            Iniciar Microfone
+        </button>
+
+        <!-- Área de status e feedback -->
+        <div id="statusMessage" class="mt-8 p-3 rounded-lg text-sm bg-gray-700 text-gray-300">
+            Pressione "Iniciar Microfone" para começar.
+        </div>
+
+        <p class="mt-6 text-xs text-gray-500">
+            * Certifique-se de que um dispositivo de áudio (por exemplo, alto-falante Bluetooth) esteja conectado antes de iniciar a transmissão.
+        </p>
+    </div>
+
+    <script>
+        // Variáveis globais para o Web Audio API
+        let audioContext = null;
+        let mediaStream = null;
+        let audioSource = null;
+
+        const toggleButton = document.getElementById('toggleButton');
+        const statusMessage = document.getElementById('statusMessage');
+
+        // Função utilitária para exibir mensagens de status
+        function updateStatus(message, isError = false) {
+            statusMessage.textContent = message;
+            if (isError) {
+                statusMessage.classList.remove('bg-gray-700', 'text-gray-300');
+                statusMessage.classList.add('bg-red-800', 'text-white');
+            } else {
+                statusMessage.classList.remove('bg-red-800', 'text-white');
+                statusMessage.classList.add('bg-gray-700', 'text-gray-300');
+            }
+        }
+
+        // Função para iniciar a captação e reprodução do áudio
+        async function startMicrophone() {
+            updateStatus('Tentando iniciar o microfone...');
+            
+            try {
+                // PASSO 1: Cria o AudioContext (se ainda não existir) e garante que ele esteja ativo.
+                // Isso precisa ocorrer DENTRO da interação do usuário para contornar políticas de autoplay/segurança.
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                // Reativa o contexto de áudio em navegadores que o suspendem (especialmente no primeiro clique em mobile)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+                
+                // PASSO 2: Obtém acesso ao microfone do usuário (o prompt de permissão aparece aqui)
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // PASSO 3: Cria um nó de fonte de áudio a partir do fluxo do microfone
+                audioSource = audioContext.createMediaStreamSource(mediaStream);
+                
+                // PASSO 4: Conecta a fonte diretamente ao destino (alto-falantes do sistema/Bluetooth)
+                audioSource.connect(audioContext.destination);
+
+                // Atualiza o estado da UI
+                toggleButton.textContent = 'Parar Microfone';
+                toggleButton.classList.remove('btn-start');
+                toggleButton.classList.add('btn-stop');
+                updateStatus('🔊 Microfone ATIVO. Seu áudio está sendo transmitido em tempo real.', false);
+                
+            } catch (error) {
+                // Trata erros (por exemplo, se o usuário negar a permissão ou houver erro de hardware)
+                console.error('Erro ao acessar o microfone:', error);
+                // NOTA: No mobile, se o prompt não aparecer, geralmente é um erro de contexto (política de autoplay) ou permissão.
+                updateStatus('🛑 Erro: Falha ao obter permissão ou iniciar microfone.', true);
+                
+                // Reinicia as variáveis em caso de falha
+                mediaStream = null;
+                audioSource = null;
+                toggleButton.textContent = 'Iniciar Microfone';
+                toggleButton.classList.remove('btn-stop');
+                toggleButton.classList.add('btn-start');
+            }
+        }
+
+        // Função para parar a captação e reprodução do áudio
+        function stopMicrophone() {
+            // 1. Desconecta o nó de áudio
+            if (audioSource) {
+                audioSource.disconnect(audioContext.destination);
+                audioSource = null;
+            }
+
+            // 2. Para a faixa do MediaStream (libera o microfone)
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            // 3. Suspende o AudioContext para liberar recursos
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.suspend().catch(e => console.error("Erro ao suspender AudioContext:", e));
+            }
+
+            // 4. Atualiza o estado da UI
+            toggleButton.textContent = 'Iniciar Microfone';
+            toggleButton.classList.remove('btn-stop');
+            toggleButton.classList.add('btn-start');
+            updateStatus('Pressione "Iniciar Microfone" para começar.');
+        }
+
+        // Gerencia o clique do botão
+        toggleButton.addEventListener('click', () => {
+            // Verifica se o microfone está ativo ou inativo
+            if (mediaStream) {
+                stopMicrophone();
+            } else {
+                startMicrophone();
+            }
+        });
+        
+        // Adiciona um listener para garantir que o microfone seja liberado quando a janela for fechada/descarregada
+        window.addEventListener('beforeunload', stopMicrophone);
+        
+    </script>
+</body>
+</html>
