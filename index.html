@@ -63,6 +63,40 @@
         .btn-start:hover {
             background-color: #2f855a;
         }
+
+        /* Estilo customizado para o slider de volume */
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-radius: 8px;
+            background-color: #1f2937;
+        }
+        input[type="range"] {
+            width: 70%;
+            -webkit-appearance: none;
+            height: 8px;
+            background: #4b5563;
+            border-radius: 4px;
+            margin: 0 10px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #60a5fa;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #60a5fa;
+            border-radius: 50%;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -74,6 +108,20 @@
         <button id="toggleButton" class="btn-start">
             Iniciar Microfone
         </button>
+
+        <!-- Controle de Volume -->
+        <div id="volumeControl" class="mt-8 hidden flex flex-col items-center">
+            <h2 class="text-lg font-semibold mb-2 text-gray-300">Volume de Saída</h2>
+            <div class="slider-container w-full px-4">
+                <span class="text-2xl" role="img" aria-label="Volume Baixo">🔈</span>
+                <input type="range" id="volumeSlider" min="0" max="2" step="0.01" value="1">
+                <span class="text-2xl" role="img" aria-label="Volume Alto">🔊</span>
+            </div>
+            <p class="mt-2 text-xs text-yellow-400">
+                **Use o volume baixo (abaixo de 1) para evitar microfonia (feedback)!**
+            </p>
+        </div>
+
 
         <!-- Área de status e feedback -->
         <div id="statusMessage" class="mt-8 p-3 rounded-lg text-sm bg-gray-700 text-gray-300">
@@ -90,9 +138,13 @@
         let audioContext = null;
         let mediaStream = null;
         let audioSource = null;
+        let gainNode = null;     // Novo nó para controle de volume
+        let filterNode = null;   // Novo nó para filtro de ruído
 
         const toggleButton = document.getElementById('toggleButton');
         const statusMessage = document.getElementById('statusMessage');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeControl = document.getElementById('volumeControl');
 
         // Função utilitária para exibir mensagens de status
         function updateStatus(message, isError = false) {
@@ -105,59 +157,83 @@
                 statusMessage.classList.add('bg-gray-700', 'text-gray-300');
             }
         }
-
+        
         // Função para iniciar a captação e reprodução do áudio
         async function startMicrophone() {
             updateStatus('Tentando iniciar o microfone...');
             
             try {
-                // PASSO 1: Cria o AudioContext (se ainda não existir) e garante que ele esteja ativo.
-                // Isso precisa ocorrer DENTRO da interação do usuário para contornar políticas de autoplay/segurança.
+                // PASSO 1: Cria o AudioContext e garante que ele esteja ativo.
                 if (!audioContext) {
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
 
-                // Reativa o contexto de áudio em navegadores que o suspendem (especialmente no primeiro clique em mobile)
+                // Reativa o contexto de áudio
                 if (audioContext.state === 'suspended') {
                     await audioContext.resume();
                 }
                 
-                // PASSO 2: Obtém acesso ao microfone do usuário (o prompt de permissão aparece aqui)
+                // PASSO 2: Obtém acesso ao microfone do usuário
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // PASSO 3: Cria um nó de fonte de áudio a partir do fluxo do microfone
+                // PASSO 3: Cria o nó de fonte de áudio
                 audioSource = audioContext.createMediaStreamSource(mediaStream);
                 
-                // PASSO 4: Conecta a fonte diretamente ao destino (alto-falantes do sistema/Bluetooth)
-                audioSource.connect(audioContext.destination);
+                // PASSO 4: Cria os nós de processamento
+                
+                // A. Filtro High-Pass (Corte de Graves) para clareza
+                filterNode = audioContext.createBiquadFilter();
+                filterNode.type = "highpass"; // Corta frequências abaixo do valor
+                filterNode.frequency.setValueAtTime(100, audioContext.currentTime); // Corta abaixo de 100 Hz
+
+                // B. Gain Node para controle de volume (essencial contra microfonia)
+                gainNode = audioContext.createGain();
+                // Inicializa o volume com o valor do slider (padrão é 1, ou seja, 100%)
+                gainNode.gain.setValueAtTime(parseFloat(volumeSlider.value), audioContext.currentTime);
+
+                // PASSO 5: Conecta a cadeia de áudio: Microfone -> Filtro -> Volume -> Alto-falante
+                audioSource.connect(filterNode)
+                           .connect(gainNode)
+                           .connect(audioContext.destination);
 
                 // Atualiza o estado da UI
                 toggleButton.textContent = 'Parar Microfone';
                 toggleButton.classList.remove('btn-start');
                 toggleButton.classList.add('btn-stop');
-                updateStatus('🔊 Microfone ATIVO. Seu áudio está sendo transmitido em tempo real.', false);
+                volumeControl.classList.remove('hidden'); // Exibe o controle de volume
+                updateStatus('🔊 Microfone ATIVO. Use o controle de volume para evitar feedback!', false);
                 
             } catch (error) {
-                // Trata erros (por exemplo, se o usuário negar a permissão ou houver erro de hardware)
+                // Trata erros 
                 console.error('Erro ao acessar o microfone:', error);
-                // NOTA: No mobile, se o prompt não aparecer, geralmente é um erro de contexto (política de autoplay) ou permissão.
                 updateStatus('🛑 Erro: Falha ao obter permissão ou iniciar microfone.', true);
                 
-                // Reinicia as variáveis em caso de falha
+                // Limpeza em caso de falha
                 mediaStream = null;
                 audioSource = null;
+                gainNode = null;
+                filterNode = null;
                 toggleButton.textContent = 'Iniciar Microfone';
                 toggleButton.classList.remove('btn-stop');
                 toggleButton.classList.add('btn-start');
+                volumeControl.classList.add('hidden');
             }
         }
 
         // Função para parar a captação e reprodução do áudio
         function stopMicrophone() {
-            // 1. Desconecta o nó de áudio
+            // 1. Desconecta os nós
             if (audioSource) {
-                audioSource.disconnect(audioContext.destination);
+                audioSource.disconnect();
                 audioSource = null;
+            }
+            if (gainNode) {
+                gainNode.disconnect();
+                gainNode = null;
+            }
+            if (filterNode) {
+                filterNode.disconnect();
+                filterNode = null;
             }
 
             // 2. Para a faixa do MediaStream (libera o microfone)
@@ -166,7 +242,7 @@
                 mediaStream = null;
             }
             
-            // 3. Suspende o AudioContext para liberar recursos
+            // 3. Suspende o AudioContext
             if (audioContext && audioContext.state !== 'closed') {
                 audioContext.suspend().catch(e => console.error("Erro ao suspender AudioContext:", e));
             }
@@ -175,12 +251,21 @@
             toggleButton.textContent = 'Iniciar Microfone';
             toggleButton.classList.remove('btn-stop');
             toggleButton.classList.add('btn-start');
+            volumeControl.classList.add('hidden'); // Esconde o controle de volume
             updateStatus('Pressione "Iniciar Microfone" para começar.');
         }
 
+        // Listener para o Slider de Volume
+        volumeSlider.addEventListener('input', () => {
+            // Ajusta o ganho do nó de volume em tempo real
+            if (gainNode) {
+                // Usa setValueAtTime para garantir um ajuste suave
+                gainNode.gain.setValueAtTime(parseFloat(volumeSlider.value), audioContext.currentTime);
+            }
+        });
+
         // Gerencia o clique do botão
         toggleButton.addEventListener('click', () => {
-            // Verifica se o microfone está ativo ou inativo
             if (mediaStream) {
                 stopMicrophone();
             } else {
